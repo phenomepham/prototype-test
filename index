@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WIOA Career Pathway Generator</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React 18 UMD + ReactDOM + Babel -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @media print {
+      .no-print { display: none !important; }
+      .print-show { display: block !important; }
+      body { background: white; }
+      .page { box-shadow: none !important; border: none !important; }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div id="root" class="max-w-6xl mx-auto p-4"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useRef } = React;
+
+    // ---- Constants ----
+    const DEFAULT_STAGES = [
+      'Intake', 'Docs', 'WEX', 'Class', 'MSG', 'Credential', 'Job', 'Follow-Up'
+    ];
+
+    const STATUS = ['To Do','Doing','Done'];
+
+    const STORAGE_KEY = 'wioa_pathway_records_v1';
+
+    // ---- Helpers ----
+    const uid = () => Math.random().toString(36).slice(2,9);
+
+    const todayISO = () => new Date().toISOString().slice(0,10);
+
+    const formatDate = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString() : '';
+
+    function classNames(...xs){ return xs.filter(Boolean).join(' '); }
+
+    // ---- Components ----
+    function Badge({children, tone='slate'}){
+      const toneMap = {
+        slate:'bg-slate-100 text-slate-700',
+        blue:'bg-blue-100 text-blue-700',
+        green:'bg-green-100 text-green-700',
+        amber:'bg-amber-100 text-amber-800',
+        red:'bg-rose-100 text-rose-700',
+        violet:'bg-violet-100 text-violet-700',
+      };
+      return <span className={classNames('px-2 py-0.5 rounded-full text-xs font-medium', toneMap[tone])}>{children}</span>
+    }
+
+    function Section({title, children, actions}){
+      return (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+          <div className="flex items-center justify-between mb-3 gap-2">
+            <h2 className="text-lg font-semibold">{title}</h2>
+            <div className="flex items-center gap-2">{actions}</div>
+          </div>
+          {children}
+        </div>
+      );
+    }
+
+    function StageDots({stages, current}){
+      return (
+        <div className="flex items-center gap-3 flex-wrap">
+          {stages.map((s,i)=>{
+            const hit = stages.indexOf(current);
+            const done = i <= hit && hit !== -1;
+            return (
+              <div key={s} className="flex items-center gap-2">
+                <div className={classNames(
+                  'w-7 h-7 shrink-0 grid place-items-center rounded-full border text-xs font-bold',
+                  done ? 'bg-green-600 text-white border-green-700' : 'bg-white text-slate-600 border-slate-300'
+                )}>{i+1}</div>
+                <div className={classNames('text-sm', done? 'font-semibold text-slate-900':'text-slate-500')}>{s}</div>
+                {i < stages.length-1 && <div className="w-6 h-px bg-slate-300 mx-1"></div>}
+              </div>
+            )
+          })}
+        </div>
+      )
+    }
+
+    function useLocalRecords(){
+      const [records, setRecords] = useState(()=>{
+        try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
+      });
+      useEffect(()=>{
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+      },[records]);
+      return { records, setRecords };
+    }
+
+    // ---- Drag & Drop (vanilla HTML5) ----
+    function useDrag(list, setList){
+      const dragId = useRef(null);
+      function onDragStart(e, id){ dragId.current = id; e.dataTransfer.effectAllowed = 'move'; }
+      function onDragOver(e){ e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+      function onDrop(e, overId){
+        e.preventDefault();
+        const from = list.findIndex(x=>x.id===dragId.current);
+        const to = list.findIndex(x=>x.id===overId);
+        if(from<0||to<0||from===to) return;
+        const copy = list.slice();
+        const [moved] = copy.splice(from,1);
+        copy.splice(to,0,moved);
+        setList(copy);
+      }
+      return { onDragStart, onDragOver, onDrop };
+    }
+
+    function ActivityRow({a, onChange, onDelete, draggableProps}){
+      return (
+        <div
+          className="group grid grid-cols-12 items-center gap-2 p-2 border rounded-xl mb-2 bg-white hover:bg-slate-50"
+          draggable
+          onDragStart={draggableProps.onDragStart}
+          onDragOver={draggableProps.onDragOver}
+          onDrop={draggableProps.onDrop}
+        >
+          <div className="col-span-4">
+            <input value={a.title} onChange={e=>onChange({...a, title:e.target.value})}
+              placeholder="Activity (e.g., Sign release)"
+              className="w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-slate-400"/>
+            <div className="mt-1 text-xs text-slate-500">Why: 
+              <input value={a.why} onChange={e=>onChange({...a, why:e.target.value})}
+                placeholder="Why this matters"
+                className="ml-2 px-2 py-1 rounded border" />
+            </div>
+          </div>
+          <div className="col-span-2">
+            <select value={a.stage} onChange={e=>onChange({...a, stage:e.target.value})}
+              className="w-full px-3 py-2 rounded-lg border">
+              {DEFAULT_STAGES.map(s=> <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="col-span-2">
+            <input type="date" value={a.due||''} onChange={e=>onChange({...a, due:e.target.value})}
+              className="w-full px-3 py-2 rounded-lg border"/>
+            <div className="mt-1 text-xs text-slate-500">{a.due ? `Due: ${formatDate(a.due)}`:''}</div>
+          </div>
+          <div className="col-span-2">
+            <select value={a.status} onChange={e=>onChange({...a, status:e.target.value})}
+              className="w-full px-3 py-2 rounded-lg border">
+              {STATUS.map(s=> <option key={s} value={s}>{s}</option>)}
+            </select>
+            <div className="mt-1 text-xs">Priority: 
+              <select value={a.priority||'Warm'} onChange={e=>onChange({...a, priority:e.target.value})} className="text-xs border rounded px-1 py-0.5">
+                {['Hot (48h)','Warm (1 wk)','Chill (2+ wks)'].map(p=> <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="col-span-2 flex items-center justify-end gap-2">
+            <button onClick={()=>onChange({...a, required:!a.required})} className={classNames('px-2 py-1 rounded-lg text-xs border', a.required?'bg-amber-50 border-amber-300':'bg-white')}>{a.required? 'Required':'Optional'}</button>
+            <button onClick={onDelete} className="px-2 py-1 rounded-lg text-xs border hover:bg-rose-50">Delete</button>
+          </div>
+        </div>
+      );
+    }
+
+    function App(){
+      const { records, setRecords } = useLocalRecords();
+
+      // Current plan state
+      const [participant, setParticipant] = useState({
+        name:'', code:'', goal:'', cn:'', backup:'', twoTapLink:''
+      });
+      const [stages, setStages] = useState(DEFAULT_STAGES);
+      const [currentStage, setCurrentStage] = useState('Intake');
+      const [activities, setActivities] = useState([]);
+      const [notes, setNotes] = useState('');
+      const [nnn, setNNN] = useState({ now:'', next:'', needed:'', date: todayISO() }); // Now–Next–Needed
+      const [printNameHidden, setPrintNameHidden] = useState(false);
+
+      const { onDragStart, onDragOver, onDrop } = useDrag(activities, setActivities);
+
+      function addActivity(){
+        setActivities(a=>[
+          ...a,
+          { id: uid(), title:'', stage: currentStage, due:'', status:'To Do', priority:'Warm', required:true, why:'' }
+        ]);
+      }
+
+      function updateActivity(idx, next){
+        setActivities(list=> list.map((x,i)=> i===idx? next : x));
+      }
+
+      function deleteActivity(idx){
+        setActivities(list=> list.filter((_,i)=> i!==idx));
+      }
+
+      function grouped(){
+        const g = Object.fromEntries(stages.map(s=>[s,[]]));
+        activities.forEach(a=>{ (g[a.stage] ||= []).push(a); });
+        return g;
+      }
+
+      const progressStage = useMemo(()=>{
+        // pick latest stage with any Done, else currentStage
+        const doneStages = stages.filter(s=> activities.some(a=> a.stage===s && a.status==='Done'));
+        return doneStages[doneStages.length-1] || currentStage;
+      },[activities, stages, currentStage]);
+
+      function saveRecord(){
+        const payload = {
+          id: uid(),
+          when: new Date().toISOString(),
+          participant, stages, currentStage, activities, notes, nnn
+        };
+        setRecords(prev=> [payload, ...prev]);
+      }
+
+      function loadRecord(id){
+        const r = records.find(x=>x.id===id);
+        if(!r) return;
+        setParticipant(r.participant);
+        setStages(r.stages);
+        setCurrentStage(r.currentStage);
+        setActivities(r.activities);
+        setNotes(r.notes);
+        setNNN(r.nnn||{now:'',next:'',needed:'',date: todayISO()});
+      }
+
+      function exportJSON(){
+        const blob = new Blob([JSON.stringify({ participant, stages, currentStage, activities, notes, nnn }, null, 2)], {type:'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = (participant.name||'pathway') + '_plan.json'; a.click(); URL.revokeObjectURL(url);
+      }
+
+      function importJSON(file){
+        const reader = new FileReader();
+        reader.onload = (e)=>{
+          try{
+            const obj = JSON.parse(e.target.result);
+            setParticipant(obj.participant||participant);
+            setStages(obj.stages||stages);
+            setCurrentStage(obj.currentStage||currentStage);
+            setActivities(obj.activities||activities);
+            setNotes(obj.notes||'');
+            setNNN(obj.nnn||{now:'',next:'',needed:'',date: todayISO()});
+          }catch(err){ alert('Bad JSON file'); }
+        }
+        reader.readAsText(file);
+      }
+
+      const sessionReceipt = useMemo(()=>{
+        const nextAct = activities.find(a=> a.status!=='Done') || activities[0];
+        const need = activities.find(a=> a.required && a.status!=='Done');
+        return `Today: you are at ${currentStage}. Next: ${nextAct? nextAct.title: '—'} by ${nextAct?.due? formatDate(nextAct.due): '—'}. Send: ${need? need.title: '—'}. Why: ${nextAct?.why||''}. Check-in: ${participant.twoTapLink||''} Code: ${participant.code||''}`;
+      },[activities, currentStage, participant]);
+
+      return (
+        <div className="space-y-4">
+          <header className="page bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h1 className="text-2xl font-bold">Career Pathway Generator</h1>
+                <p className="text-slate-500 text-sm">One-look plan: Where you are → What is next → Why it matters → By when</p>
+              </div>
+              <div className="no-print flex items-center gap-2">
+                <button onClick={saveRecord} className="px-3 py-2 rounded-lg border bg-emerald-600 text-white">Save Plan</button>
+                <button onClick={exportJSON} className="px-3 py-2 rounded-lg border">Export</button>
+                <label className="px-3 py-2 rounded-lg border cursor-pointer">Import
+                  <input type="file" accept="application/json" className="hidden" onChange={e=> e.target.files[0] && importJSON(e.target.files[0])}/>
+                </label>
+                <button onClick={()=>window.print()} className="px-3 py-2 rounded-lg border">Print</button>
+              </div>
+            </div>
+          </header>
+
+          <div className="grid md:grid-cols-3 gap-4">
+            <Section title="Participant" actions={
+              <>
+                <label className="text-sm flex items-center gap-1 no-print"><input type="checkbox" className="accent-slate-700" checked={printNameHidden} onChange={e=>setPrintNameHidden(e.target.checked)} />Hide name on print</label>
+              </>
+            }>
+              <div className="grid gap-2">
+                <div className="grid grid-cols-3 gap-2 items-center">
+                  <label className="text-sm">Name</label>
+                  <input className="col-span-2 px-3 py-2 rounded-lg border" value={participant.name} onChange={e=>setParticipant({...participant,name:e.target.value})} />
+                </div>
+                <div className="grid grid-cols-3 gap-2 items-center">
+                  <label className="text-sm">CN</label>
+                  <input className="col-span-2 px-3 py-2 rounded-lg border" value={participant.cn} onChange={e=>setParticipant({...participant,cn:e.target.value})} />
+                </div>
+                <div className="grid grid-cols-3 gap-2 items-center">
+                  <label className="text-sm">Case Code</label>
+                  <input className="col-span-2 px-3 py-2 rounded-lg border" value={participant.code} onChange={e=>setParticipant({...participant,code:e.target.value})} />
+                </div>
+                <div className="grid grid-cols-3 gap-2 items-center">
+                  <label className="text-sm">Goal</label>
+                  <input className="col-span-2 px-3 py-2 rounded-lg border" value={participant.goal} onChange={e=>setParticipant({...participant,goal:e.target.value})} />
+                </div>
+                <div className="grid grid-cols-3 gap-2 items-center">
+                  <label className="text-sm">Backup Contact</label>
+                  <input className="col-span-2 px-3 py-2 rounded-lg border" value={participant.backup} onChange={e=>setParticipant({...participant,backup:e.target.value})} />
+                </div>
+                <div className="grid grid-cols-3 gap-2 items-center">
+                  <label className="text-sm">Two-Tap Link</label>
+                  <input className="col-span-2 px-3 py-2 rounded-lg border" value={participant.twoTapLink} onChange={e=>setParticipant({...participant,twoTapLink:e.target.value})} placeholder="https://forms.gle/..." />
+                </div>
+                <div className="pt-2 border-t mt-2">
+                  <div className="text-xs text-slate-500">Printed header</div>
+                  <div className="text-base font-semibold">
+                    {!printNameHidden ? (participant.name || '—') : 'Participant'} — Career Pathway
+                  </div>
+                  <div className="text-sm">CN: {participant.cn || '—'} • Code: {participant.code || '—'} • Goal: {participant.goal || '—'}</div>
+                </div>
+              </div>
+            </Section>
+
+            <Section title="Pathway Progress" actions={<Badge tone="green">{progressStage}</Badge>}>
+              <div className="flex items-center justify-between mb-3">
+                <select className="px-3 py-2 rounded-lg border" value={currentStage} onChange={e=>setCurrentStage(e.target.value)}>
+                  {stages.map(s=> <option key={s} value={s}>{s}</option>)}
+                </select>
+                <div className="text-xs text-slate-500">Set current stage</div>
+              </div>
+              <StageDots stages={stages} current={progressStage} />
+              <div className="mt-3 text-sm text-slate-600">Tip: mark items as <em>Done</em> to move the dot.</div>
+            </Section>
+
+            <Section title="Now–Next–Needed (session end)" actions={<Badge tone="amber">Receipt</Badge>}>
+              <div className="grid gap-2">
+                <textarea className="w-full px-3 py-2 rounded-lg border" rows="2" placeholder="Now (where they are)" value={nnn.now} onChange={e=>setNNN({...nnn, now:e.target.value})}></textarea>
+                <input className="w-full px-3 py-2 rounded-lg border" placeholder="Next (one task)" value={nnn.next} onChange={e=>setNNN({...nnn, next:e.target.value})} />
+                <input className="w-full px-3 py-2 rounded-lg border" placeholder="Needed (doc/sign/test)" value={nnn.needed} onChange={e=>setNNN({...nnn, needed:e.target.value})} />
+                <div className="flex items-center gap-2">
+                  <label className="text-sm">Due by</label>
+                  <input type="date" className="px-3 py-2 rounded-lg border" value={nnn.date} onChange={e=>setNNN({...nnn, date:e.target.value})} />
+                </div>
+                <div className="text-xs text-slate-500">Copy text for your follow-up:</div>
+                <div className="text-sm p-2 border rounded-lg bg-slate-50 select-all whitespace-pre-line">{sessionReceipt}</div>
+              </div>
+            </Section>
+          </div>
+
+          <Section title="Activities" actions={
+            <>
+              <button onClick={addActivity} className="no-print px-3 py-2 rounded-lg border bg-slate-900 text-white">Add Activity</button>
+            </>
+          }>
+            <div className="grid md:grid-cols-2 gap-4">
+              {Object.entries(grouped()).map(([stage, rows])=> (
+                <div key={stage} className="bg-slate-50 rounded-2xl p-3 border">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-semibold">{stage}</div>
+                    <Badge tone={rows.some(r=>r.status!=='Done')? 'amber':'green'}>
+                      {rows.filter(r=>r.status==='Done').length}/{rows.length} Done
+                    </Badge>
+                  </div>
+                  {rows.length===0 && <div className="text-sm text-slate-500">No items yet.</div>}
+                  {rows.map((a,idx)=>{
+                    const realIdx = activities.findIndex(x=>x.id===a.id);
+                    return (
+                      <ActivityRow key={a.id} a={a}
+                        onChange={(next)=>updateActivity(realIdx, next)}
+                        onDelete={()=>deleteActivity(realIdx)}
+                        draggableProps={{
+                          onDragStart:(e)=>onDragStart(e, a.id),
+                          onDragOver:onDragOver,
+                          onDrop:(e)=>onDrop(e, a.id)
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </Section>
+
+          <Section title="Notes">
+            <textarea rows="4" className="w-full px-3 py-2 rounded-lg border" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Extra info, barriers, wins, contact rules..."></textarea>
+          </Section>
+
+          <Section title="Saved Plans (local)" actions={<Badge tone="violet">Device only</Badge>}>
+            {records.length===0 && <div className="text-sm text-slate-500">No plans saved yet.</div>}
+            <div className="grid md:grid-cols-2 gap-3">
+              {records.map(r=> (
+                <div key={r.id} className="p-3 border rounded-xl bg-white flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold">{r.participant?.name || 'Unnamed'} • {new Date(r.when).toLocaleString()}</div>
+                    <div className="text-xs text-slate-500">Stage: {r.currentStage} | Items: {r.activities?.length||0}</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="px-2 py-1 rounded-lg border" onClick={()=>loadRecord(r.id)}>Load</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Section>
+
+          <footer className="print-show hidden text-center text-sm text-slate-600">
+            Career Navigator: {participant.cn || '—'} • Printed: {new Date().toLocaleDateString()} • Code: {participant.code || '—'}
+          </footer>
+
+          <div className="h-6"></div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App/>);
+  </script>
+</body>
+</html>
